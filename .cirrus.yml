@@ -460,6 +460,24 @@ swagger_task:
 
 win_installer_task:
     name: "Verify Win Installer Build"
+# There are several other important variations of podman which
+# must always build successfully.  Most of them are handled in
+# this task, though a few need dedicated tasks which follow.
+alt_build_task:
+    name: "$ALT_NAME"
+    alias: alt_build
+    # Don't create task for [CI:DOCS], multiarch or rhel-release builds
+    # Docs: ./contrib/cirrus/CIModes.md
+    only_if: &no_multiarch_rhel |
+        $CIRRUS_CRON != 'multiarch' &&
+        $CIRRUS_BRANCH !=~ '.*v[0-9\.]+-rhel.*' &&
+        $CIRRUS_BASE_BRANCH !=~ '.*v[0-9\.]+-rhel.*'
+    depends_on:
+        - build
+    env:
+        <<: *stdenvars
+        TEST_FLAVOR: "altbuild"
+    gce_instance: *standardvm
     matrix:
       - env:
             CONTAINERS_MACHINE_PROVIDER: 'wsl'
@@ -677,8 +695,33 @@ compose_test_task:
     setup_script: *setup
     main_script: *main
     always: *logs_artifacts
-
-
+# Execute the podman integration tests on all primary platforms and release
+windows_smoke_test_task:
+    name: "Windows Smoke Test"
+    alias: windows_smoke_test
+    # Only run for non-docs/copr PRs and non-multiarch branch builds
+    # and never for tags.  Docs: ./contrib/cirrus/CIModes.md
+    only_if: >-
+        $CIRRUS_TAG == '' &&
+        $CIRRUS_CRON != 'multiarch' &&
+        $CIRRUS_CHANGE_TITLE !=~ '.*CI:DOCS.*' &&
+        $CIRRUS_CHANGE_TITLE !=~ '.*CI:COPR.*' &&
+        $CIRRUS_BRANCH !=~ '.*v[0-9\.]+-rhel.*' &&
+        $CIRRUS_BASE_BRANCH !=~ '.*v[0-9\.]+-rhel.*'
+    depends_on:
+      - alt_build
+    experimental: true  # Enable labeling of EC2 VMs with cirrus task ID
+    ec2_instance:
+        image: "${WINDOWS_AMI}"
+        type: m5zn.metal
+        region: us-east-1
+        platform: windows
+    env:
+        PATH: "${PATH};C:\\ProgramData\\chocolatey\\bin"
+        CIRRUS_SHELL: powershell
+        # Fake version, we are only testing the installer functions, so version doesn't matter
+        CIRRUS_WORKING_DIR: "${LOCALAPPDATA}\\Temp\\cirrus-ci-build"
+    main_script: 'contrib/cirrus/win-podman-machine-main.ps1'
 # versions, as root, without involving the podman-remote client.
 local_integration_test_task: &local_integration_test_task
     # Integration-test task name convention:
@@ -1173,20 +1216,24 @@ success_task:
         - buildah_bud_test
         - upgrade_test
         - meta
+    
+    
     env:
         CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
     container: *smallcontainer
-    clone_script: *noop
-    script: *noop
-
-# WARNING: Most of the artifacts captured here are also have their
-# permalinks present in the `DOWNLOADS.md` file.  Any changes made
-# here, should probably be reflected in that document.
+    clone_script: whatever
+    script: whatever
 artifacts_task:
     name: "Artifacts"
     alias: artifacts
     # Docs: ./contrib/cirrus/CIModes.md
     only_if: *no_rhel_release
+    only_if: >-
+        $CIRRUS_CHANGE_TITLE !=~ '.*CI:DOCS.*' &&
+        $CIRRUS_CHANGE_TITLE !=~ '.*CI:COPR.*' &&
+        $CIRRUS_CRON != 'multiarch' &&
+        $CIRRUS_BRANCH !=~ '.*v[0-9\.]+-rhel.*' &&
+        $CIRRUS_BASE_BRANCH !=~ '.*v[0-9\.]+-rhel.*'
     depends_on:
         - success
     # This task is a secondary/convenience for downstream consumers, don't
